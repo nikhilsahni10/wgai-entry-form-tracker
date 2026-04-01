@@ -205,8 +205,11 @@ def parse_history_timestamp(value):
 
 def load_check_history():
     try:
+        cache_busted_url = (
+            f"{HISTORY_CSV_URL}?ts={int(datetime.now(timezone.utc).timestamp())}"
+        )
         response = requests.get(
-            HISTORY_CSV_URL,
+            cache_busted_url,
             headers={"Cache-Control": "no-cache"},
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
