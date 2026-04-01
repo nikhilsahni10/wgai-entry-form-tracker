@@ -221,8 +221,8 @@ def render_status_page(payload):
         ),
         (
             MONITOR_STARTED_AT,
-            "Public tracker and Telegram monitor launched",
-            "Background checks run every 5 minutes.",
+            "Public tracker and hosted monitor launched",
+            "Hosted checks run every 5 minutes through GitHub Actions.",
         ),
         (
             current_ist_timestamp(),
@@ -452,6 +452,9 @@ def render_status_page(payload):
       <p class="footer">
         Source page:
         <a href="{escape(MONITOR_URL)}">{escape(MONITOR_URL)}</a>
+      </p>
+      <p class="footer">
+        Public page hosted on Vercel. Automated checks run on GitHub Actions every 5 minutes.
       </p>
     </main>
   </body>
