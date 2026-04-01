@@ -1,0 +1,116 @@
+name: Monitor WGAI Entry Form
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wgai-entry-form-monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Fetch live status
+        id: live
+        run: |
+          curl -fsS "https://wgai-monitor.vercel.app/api/check" -o status.json
+          python3 - <<'PY'
+          import json
+          import os
+
+          with open("status.json", "r", encoding="utf-8") as fh:
+              payload = json.load(fh)
+
+          current_text = payload.get("current_text", "").strip()
+          status = payload.get("status", "unknown")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"status={status}\n")
+              out.write("current_text<<EOF\n")
+              out.write(current_text + "\n")
+              out.write("EOF\n")
+          PY
+
+      - name: Compare against saved state
+        id: state
+        run: |
+          mkdir -p .state
+          previous_text=""
+          if [ -f .state/last_text.txt ]; then
+            previous_text="$(cat .state/last_text.txt)"
+          fi
+
+          current_text="${{ steps.live.outputs.current_text }}"
+          changed="false"
+          initialized="false"
+
+          if [ ! -f .state/last_text.txt ]; then
+            initialized="true"
+          elif [ "$current_text" != "$previous_text" ]; then
+            changed="true"
+          fi
+
+          printf '%s' "$current_text" > .state/last_text.txt
+
+          {
+            echo "changed=$changed"
+            echo "initialized=$initialized"
+            echo "previous_text<<EOF"
+            echo "$previous_text"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Send Telegram alert
+        if: steps.state.outputs.changed == 'true'
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          OLD_TEXT: ${{ steps.state.outputs.previous_text }}
+          NEW_TEXT: ${{ steps.live.outputs.current_text }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import urllib.parse
+          import urllib.request
+
+          token = os.environ["TELEGRAM_TOKEN"]
+          chat_id = os.environ["CHAT_ID"]
+          old_text = os.environ["OLD_TEXT"]
+          new_text = os.environ["NEW_TEXT"]
+          message = (
+              "WGAI text changed.\n\n"
+              f"Old text:\n{old_text}\n\n"
+              f"New text:\n{new_text}\n\n"
+              "Tracker:\nhttps://wgai-monitor.vercel.app/"
+          )
+          data = urllib.parse.urlencode(
+              {"chat_id": chat_id, "text": message}
+          ).encode("utf-8")
+          request = urllib.request.Request(
+              f"https://api.telegram.org/bot{token}/sendMessage",
+              data=data,
+              method="POST",
+          )
+          with urllib.request.urlopen(request, timeout=20) as response:
+              if response.status != 200:
+                  raise SystemExit(f"Telegram send failed with status {response.status}")
+          PY
+
+      - name: Commit updated state
+        if: steps.state.outputs.changed == 'true' || steps.state.outputs.initialized == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .state/last_text.txt
+          git commit -m "Update tracked WGAI text" || exit 0
+          git push
