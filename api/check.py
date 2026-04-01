@@ -25,6 +25,7 @@ HISTORY_CSV_URL = (
     "nikhilsahni10/wgai-entry-form-tracker/main/data/check_history.csv"
 )
 MAX_HISTORY_ROWS = 200
+STALE_AFTER_MINUTES = 12
 IST = timezone(timedelta(hours=5, minutes=30))
 
 
@@ -195,6 +196,13 @@ def current_ist_timestamp():
     )
 
 
+def parse_history_timestamp(value):
+    try:
+        return datetime.strptime(value, "%Y-%m-%d %H:%M:%S IST").replace(tzinfo=IST)
+    except Exception:
+        return None
+
+
 def load_check_history():
     try:
         response = requests.get(
@@ -221,9 +229,26 @@ def render_status_page(payload):
     status = payload.get("status", "unknown")
     current_text = payload.get("current_text", "Unavailable")
     history_rows, total_history_rows = load_check_history()
+    latest_history_time = (
+        parse_history_timestamp(history_rows[0]["timestamp"]) if history_rows else None
+    )
     latest_check_timestamp = (
         history_rows[0]["timestamp"] if history_rows else current_ist_timestamp()
     )
+    is_monitor_stale = True
+    health_badge = "Monitor stale"
+    health_tone = "tone-alert"
+    health_copy = (
+        "Hosted checks have not reported in recently. Do not rely on alert coverage until a new row appears."
+    )
+
+    if latest_history_time is not None:
+        elapsed = datetime.now(timezone.utc).astimezone(IST) - latest_history_time
+        is_monitor_stale = elapsed > timedelta(minutes=STALE_AFTER_MINUTES)
+        if not is_monitor_stale:
+            health_badge = "Monitor healthy"
+            health_tone = "tone-ok"
+            health_copy = "Hosted checks are arriving on schedule."
 
     if status == "changed":
         badge = "Change detected"
@@ -497,6 +522,13 @@ def render_status_page(payload):
 
         <div class="meta">
           <article class="meta-card">
+            <div class="meta-label">Monitor Health</div>
+            <div class="meta-value">
+              <span class="badge {health_tone}">{escape(health_badge)}</span>
+            </div>
+            <div class="timeline-copy" style="margin-top: 10px;">{escape(health_copy)}</div>
+          </article>
+          <article class="meta-card">
             <div class="meta-label">Latest Hosted Check</div>
             <div class="meta-value">{escape(latest_check_timestamp)}</div>
           </article>
@@ -552,7 +584,7 @@ def render_status_page(payload):
         <a href="{escape(MONITOR_URL)}">{escape(MONITOR_URL)}</a>
       </p>
       <p class="footer">
-        Public page hosted on Vercel. Automated checks run on GitHub Actions every 5 minutes.
+        Public page hosted on Vercel. Automated checks run on GitHub Actions every 5 minutes, and Telegram alerts are sent only for real changes or monitor failures.
       </p>
     </main>
   </body>
