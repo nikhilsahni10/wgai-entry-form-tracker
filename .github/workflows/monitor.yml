@@ -1,25 +1,101 @@
 name: Monitor WGAI Entry Form
 
 on:
+  repository_dispatch:
+    types:
+      - continue-monitor
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "2,17,32,47 * * * *"
   workflow_dispatch:
 
 permissions:
+  actions: write
   contents: write
 
-concurrency:
-  group: wgai-entry-form-monitor
-  cancel-in-progress: false
-
 jobs:
-  monitor:
+  should_start:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    outputs:
+      should_run: ${{ steps.decision.outputs.should_run }}
+      reason: ${{ steps.decision.outputs.reason }}
 
+    steps:
+      - name: Decide whether to start the monitor loop
+        id: decision
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HISTORY_URL: https://raw.githubusercontent.com/nikhilsahni10/wgai-entry-form-tracker/main/data/check_history.csv
+        run: |
+          python3 - <<'PY'
+          import csv
+          import os
+          import time
+          from datetime import datetime, timedelta, timezone
+          from io import StringIO
+          from urllib.error import HTTPError
+          from urllib.request import Request, urlopen
+
+          ist = timezone(timedelta(hours=5, minutes=30))
+          event_name = os.environ["EVENT_NAME"]
+          should_run = "false"
+          reason = "recent checks already exist"
+
+          if event_name in {"workflow_dispatch", "repository_dispatch"}:
+              should_run = "true"
+              reason = f"{event_name} requested a monitor session"
+          else:
+              url = f"{os.environ['HISTORY_URL']}?ts={int(time.time())}"
+              request = Request(
+                  url,
+                  headers={"Cache-Control": "no-cache"},
+              )
+              try:
+                  with urlopen(request, timeout=20) as response:
+                      payload = response.read().decode("utf-8")
+              except HTTPError as error:
+                  if error.code == 404:
+                      payload = ""
+                  else:
+                      raise
+
+              if not payload:
+                  should_run = "true"
+                  reason = "history file is missing or empty"
+              else:
+                  rows = list(csv.DictReader(StringIO(payload)))
+                  latest = rows[-1]["timestamp"] if rows else ""
+
+                  if not latest:
+                      should_run = "true"
+                      reason = "history file is empty"
+                  else:
+                      latest_dt = datetime.strptime(
+                          latest,
+                          "%Y-%m-%d %H:%M:%S IST",
+                      ).replace(tzinfo=ist)
+                      age = datetime.now(timezone.utc).astimezone(ist) - latest_dt
+                      if age > timedelta(minutes=12):
+                          should_run = "true"
+                          reason = f"latest check is stale by {age}"
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"should_run={should_run}\n")
+              out.write(f"reason={reason}\n")
+          PY
+
+  monitor:
+    needs: should_start
+    if: needs.should_start.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    concurrency:
+      group: wgai-entry-form-monitor-loop
+      cancel-in-progress: false
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -31,24 +107,60 @@ jobs:
           python3 -m pip install --upgrade pip
           python3 -m pip install -r requirements.txt
 
-      - name: Run hosted monitor
-        id: monitor
-        continue-on-error: true
-        env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          CHAT_ID: ${{ secrets.CHAT_ID }}
-        run: python3 scripts/monitor_once.py
-
-      - name: Commit updated state
-        if: always()
+      - name: Configure Git author
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A .state data
-          git diff --cached --quiet && exit 0
-          git commit -m "Record WGAI check at $(TZ=Asia/Kolkata date '+%Y-%m-%d %H:%M:%S IST')"
-          git push
 
-      - name: Fail workflow if monitor run failed
-        if: steps.monitor.outcome != 'success'
-        run: exit 1
+      - name: Run rolling 5-minute checks
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: |
+          iterations=70
+
+          for iteration in $(seq 1 "${iterations}"); do
+            echo "Running check ${iteration}/${iterations}"
+            python3 scripts/monitor_once.py || true
+
+            git add -A .state data
+            if ! git diff --cached --quiet; then
+              timestamp="$(TZ=Asia/Kolkata date '+%Y-%m-%d %H:%M:%S IST')"
+              git commit -m "Record WGAI check at ${timestamp}" || true
+
+              for attempt in 1 2 3; do
+                if git pull --rebase origin main && git push origin HEAD:main; then
+                  break
+                fi
+
+                if [ "${attempt}" -eq 3 ]; then
+                  exit 1
+                fi
+
+                sleep 5
+              done
+            fi
+
+            if [ "${iteration}" -lt "${iterations}" ]; then
+              sleep_seconds="$((300 - $(date +%s) % 300))"
+              if [ "${sleep_seconds}" -eq 0 ]; then
+                sleep_seconds=300
+              fi
+              echo "Sleeping ${sleep_seconds}s until the next 5-minute boundary"
+              sleep "${sleep_seconds}"
+            fi
+          done
+
+      - name: Queue the next monitor session
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          curl -fsS \
+            -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPO}/dispatches" \
+            -d '{"event_type":"continue-monitor"}'
