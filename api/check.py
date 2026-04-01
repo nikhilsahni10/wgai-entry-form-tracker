@@ -587,7 +587,7 @@ def run_check(send_notifications=True):
                 current_text,
                 previous_text,
                 "kv" if use_kv else "baseline",
-                bool(config["chat_id"]),
+                True,
             )
 
         if not config["chat_id"]:
