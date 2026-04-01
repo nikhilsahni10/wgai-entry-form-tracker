@@ -41,34 +41,66 @@ jobs:
               out.write("EOF\n")
           PY
 
-      - name: Compare against saved state
+      - name: Update tracked state and check history
         id: state
         run: |
-          mkdir -p .state
-          previous_text=""
-          if [ -f .state/last_text.txt ]; then
-            previous_text="$(cat .state/last_text.txt)"
-          fi
+          mkdir -p .state data
+          python3 - <<'PY'
+          import csv
+          import os
+          from datetime import datetime, timedelta, timezone
 
-          current_text="${{ steps.live.outputs.current_text }}"
-          changed="false"
-          initialized="false"
+          current_text = os.environ["CURRENT_TEXT"].strip()
+          status = os.environ["LIVE_STATUS"].strip()
+          state_path = ".state/last_text.txt"
+          history_path = "data/check_history.csv"
 
-          if [ ! -f .state/last_text.txt ]; then
-            initialized="true"
-          elif [ "$current_text" != "$previous_text" ]; then
-            changed="true"
-          fi
+          ist = timezone(timedelta(hours=5, minutes=30))
+          timestamp = datetime.now(timezone.utc).astimezone(ist).strftime(
+              "%Y-%m-%d %H:%M:%S IST"
+          )
 
-          printf '%s' "$current_text" > .state/last_text.txt
+          previous_text = ""
+          initialized = not os.path.exists(state_path)
+          if not initialized:
+              with open(state_path, "r", encoding="utf-8") as fh:
+                  previous_text = fh.read().strip()
 
-          {
-            echo "changed=$changed"
-            echo "initialized=$initialized"
-            echo "previous_text<<EOF"
-            echo "$previous_text"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+          changed = (not initialized) and current_text != previous_text
+
+          with open(state_path, "w", encoding="utf-8") as fh:
+              fh.write(current_text)
+
+          history_exists = os.path.exists(history_path)
+          with open(history_path, "a", encoding="utf-8", newline="") as fh:
+              writer = csv.DictWriter(
+                  fh,
+                  fieldnames=["timestamp", "status", "changed", "current_text"],
+              )
+              if not history_exists:
+                  writer.writeheader()
+              writer.writerow(
+                  {
+                      "timestamp": timestamp,
+                      "status": status,
+                      "changed": "true" if changed else "false",
+                      "current_text": current_text,
+                  }
+              )
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"changed={'true' if changed else 'false'}\n")
+              out.write(f"initialized={'true' if initialized else 'false'}\n")
+              out.write("previous_text<<EOF\n")
+              out.write(previous_text + "\n")
+              out.write("EOF\n")
+              out.write("timestamp<<EOF\n")
+              out.write(timestamp + "\n")
+              out.write("EOF\n")
+          PY
+        env:
+          CURRENT_TEXT: ${{ steps.live.outputs.current_text }}
+          LIVE_STATUS: ${{ steps.live.outputs.status }}
 
       - name: Send Telegram alert
         if: steps.state.outputs.changed == 'true'
@@ -107,10 +139,9 @@ jobs:
           PY
 
       - name: Commit updated state
-        if: steps.state.outputs.changed == 'true' || steps.state.outputs.initialized == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .state/last_text.txt
-          git commit -m "Update tracked WGAI text" || exit 0
+          git add .state/last_text.txt data/check_history.csv
+          git commit -m "Record WGAI check at ${{ steps.state.outputs.timestamp }}" || exit 0
           git push

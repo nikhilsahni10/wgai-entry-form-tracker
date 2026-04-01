@@ -1,8 +1,10 @@
+import csv
 import json
 import os
 from datetime import datetime, timedelta, timezone
 from html import escape
 from http.server import BaseHTTPRequestHandler
+from io import StringIO
 from urllib.parse import parse_qs, quote, urlparse
 
 import requests
@@ -18,6 +20,11 @@ REQUEST_TIMEOUT_SECONDS = 20
 HARDCODED_INITIAL_TEXT = "Entry Form for Amateur Players - Season 2026 (Leg 5 to 6)"
 BASELINE_CAPTURED_AT = "March 31, 2026"
 MONITOR_STARTED_AT = "April 1, 2026"
+HISTORY_CSV_URL = (
+    "https://raw.githubusercontent.com/"
+    "nikhilsahni10/wgai-entry-form-tracker/main/data/check_history.csv"
+)
+MAX_HISTORY_ROWS = 200
 IST = timezone(timedelta(hours=5, minutes=30))
 
 
@@ -188,11 +195,35 @@ def current_ist_timestamp():
     )
 
 
+def load_check_history():
+    try:
+        response = requests.get(
+            HISTORY_CSV_URL,
+            headers={"Cache-Control": "no-cache"},
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+        if response.status_code == 404:
+            return [], 0
+        response.raise_for_status()
+
+        rows = []
+        reader = csv.DictReader(StringIO(response.text))
+        for row in reader:
+            if row.get("timestamp"):
+                rows.append(row)
+
+        return list(reversed(rows[-MAX_HISTORY_ROWS:])), len(rows)
+    except Exception:
+        return [], 0
+
+
 def render_status_page(payload):
     status = payload.get("status", "unknown")
     current_text = payload.get("current_text", "Unavailable")
-    previous_text = payload.get("old_text") or payload.get("previous_text") or HARDCODED_INITIAL_TEXT
-    changed = status == "changed"
+    history_rows, total_history_rows = load_check_history()
+    latest_check_timestamp = (
+        history_rows[0]["timestamp"] if history_rows else current_ist_timestamp()
+    )
 
     if status == "changed":
         badge = "Change detected"
@@ -212,6 +243,24 @@ def render_status_page(payload):
         hero_copy = (
             "The WGAI page still shows the same entry-form text as the baseline capture."
         )
+
+    if history_rows:
+        history_table_rows = "".join(
+            f"""
+            <tr class="history-row {'history-row-alert' if row.get('changed') == 'true' else ''}">
+              <td>{escape(row.get("timestamp", ""))}</td>
+              <td>{escape(row.get("status", ""))}</td>
+              <td>{escape(row.get("current_text", ""))}</td>
+            </tr>
+            """
+            for row in history_rows
+        )
+    else:
+        history_table_rows = """
+            <tr>
+              <td colspan="3">Check history will appear here after the next hosted run.</td>
+            </tr>
+        """
 
     timeline_items = [
         (
@@ -401,6 +450,35 @@ def render_status_page(payload):
         color: var(--muted);
         font-size: 14px;
       }}
+      .table-wrap {{
+        overflow-x: auto;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        box-shadow: 0 16px 40px rgba(54, 48, 28, 0.06);
+      }}
+      .history-table {{
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 760px;
+      }}
+      .history-table th,
+      .history-table td {{
+        padding: 14px 16px;
+        text-align: left;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+      }}
+      .history-table th {{
+        font-size: 12px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--muted);
+        background: rgba(255, 255, 255, 0.55);
+      }}
+      .history-row-alert td {{
+        background: rgba(253, 235, 236, 0.6);
+      }}
       a {{ color: inherit; }}
       @media (max-width: 700px) {{
         .hero {{ padding: 24px; border-radius: 22px; }}
@@ -419,8 +497,8 @@ def render_status_page(payload):
 
         <div class="meta">
           <article class="meta-card">
-            <div class="meta-label">Last Checked</div>
-            <div class="meta-value">{escape(current_ist_timestamp())}</div>
+            <div class="meta-label">Latest Hosted Check</div>
+            <div class="meta-value">{escape(latest_check_timestamp)}</div>
           </article>
           <article class="meta-card">
             <div class="meta-label">Check Frequency</div>
@@ -429,6 +507,10 @@ def render_status_page(payload):
           <article class="meta-card">
             <div class="meta-label">What We Watch</div>
             <div class="meta-value">Any short text containing “Entry Form for Amateur Players”</div>
+          </article>
+          <article class="meta-card">
+            <div class="meta-label">Checks Logged</div>
+            <div class="meta-value">{total_history_rows}</div>
           </article>
         </div>
 
@@ -448,6 +530,22 @@ def render_status_page(payload):
       <ol class="timeline">
         {timeline_html}
       </ol>
+
+      <h2 class="section-title">Check Log</h2>
+      <div class="table-wrap">
+        <table class="history-table">
+          <thead>
+            <tr>
+              <th>Timestamp of Check</th>
+              <th>Status</th>
+              <th>Observed Text</th>
+            </tr>
+          </thead>
+          <tbody>
+            {history_table_rows}
+          </tbody>
+        </table>
+      </div>
 
       <p class="footer">
         Source page:
