@@ -12714,3 +12714,4 @@ timestamp,status,changed,current_text
 2026-05-15 09:15:00 IST,failed,false,"Monitoring failed: Failed to fetch monitored text after 3 attempts: HTTPSConnectionPool(host='www.wgai.co.in', port=443): Max retries exceeded with url: /pages/membership-information.php (Caused by ConnectTimeoutError(<HTTPSConnection(h..."
 2026-05-15 09:20:00 IST,failed,false,"Monitoring failed: Failed to fetch monitored text after 3 attempts: HTTPSConnectionPool(host='www.wgai.co.in', port=443): Max retries exceeded with url: /pages/membership-information.php (Caused by ConnectTimeoutError(<HTTPSConnection(h..."
 2026-05-15 09:21:41 IST,unchanged,false,Entry Form for Amateur Players - Season 2026 (Leg 7 to 8)
+2026-05-15 09:25:00 IST,unchanged,false,Entry Form for Amateur Players - Season 2026 (Leg 7 to 8)
