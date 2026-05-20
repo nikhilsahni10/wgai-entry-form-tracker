@@ -6,8 +6,10 @@
 
 set -eu
 
-STATUS_URL="https://wgai-monitor.vercel.app/api/check"
-NOTIFY_URL="https://wgai-monitor.vercel.app/api/notify"
+TRACKER_URL="${TRACKER_URL:-https://wgai-monitor.vercel.app}"
+TRACKER_URL="${TRACKER_URL%/}"
+STATUS_URL="${TRACKER_URL}/api/check"
+NOTIFY_URL="${TRACKER_URL}/api/notify"
 STATE_FILE="$HOME/.wgai-monitor-confirmed"
 LAST_TEXT_FILE="$HOME/.wgai-monitor-last-text"
 LOG_FILE="/tmp/wgai-monitor-cron.log"

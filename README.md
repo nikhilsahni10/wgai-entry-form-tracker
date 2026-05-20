@@ -2,11 +2,18 @@
 
 Public status page:
 
-https://wgai-monitor.vercel.app/
+Set `TRACKER_URL` to the current production deployment URL. The code falls
+back to `https://wgai-monitor.vercel.app/`, but the monitor no longer depends
+on that hardcoded domain when `TRACKER_URL`, `PUBLIC_TRACKER_URL`,
+`VERCEL_PROJECT_PRODUCTION_URL`, or `VERCEL_URL` is available.
 
 This project watches the WGAI membership page for the short text containing
 `Entry Form for Amateur Players` and highlights whether the live text has
 changed from the baseline.
 
 Hosted checks run every 5 minutes through GitHub Actions. The share page on
-Vercel is read-only and safe to open publicly.
+Vercel is read-only and safe to open publicly. If a GitHub Actions runner
+cannot reach `wgai.co.in` directly, the monitor falls back to the deployed
+Vercel API before treating the check as a hard failure. For that fallback to
+work from GitHub Actions, set the repository variable `TRACKER_URL` to the
+live Vercel URL.

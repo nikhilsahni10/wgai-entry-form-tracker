@@ -1,0 +1,70 @@
+name: Check Public Tracker Uptime
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+jobs:
+  uptime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TRACKER_URL: ${{ vars.TRACKER_URL }}
+      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+      CHAT_ID: ${{ secrets.CHAT_ID }}
+
+    steps:
+      - name: Check tracker API
+        run: |
+          set -u
+
+          tracker_url="${TRACKER_URL:-https://wgai-monitor.vercel.app}"
+          tracker_url="${tracker_url%/}"
+          api_url="${tracker_url}/api/check"
+          response_file="$(mktemp)"
+          error_file="$(mktemp)"
+
+          notify_failure() {
+            reason="$1"
+
+            if [ -n "${TELEGRAM_TOKEN:-}" ] && [ -n "${CHAT_ID:-}" ]; then
+              message="$(printf 'WGAI public tracker uptime check failed.\n\nURL:\n%s\n\nReason:\n%s' "$api_url" "$reason")"
+              curl -fsS \
+                "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+                --data-urlencode "chat_id=${CHAT_ID}" \
+                --data-urlencode "text=${message}" \
+                >/dev/null || true
+            fi
+          }
+
+          if ! curl -fsS --max-time 30 "$api_url" -o "$response_file" 2>"$error_file"; then
+            reason="$(cat "$error_file")"
+            notify_failure "$reason"
+            echo "$reason" >&2
+            exit 1
+          fi
+
+          if ! python3 - "$response_file" <<'PY'
+          import json
+          import sys
+
+          path = sys.argv[1]
+          with open(path, "r", encoding="utf-8") as fh:
+              payload = json.load(fh)
+
+          if not payload.get("ok"):
+              raise SystemExit(payload.get("error") or f"Unexpected payload: {payload}")
+
+          if not payload.get("current_text"):
+              raise SystemExit(f"Missing current_text in payload: {payload}")
+
+          print(payload["current_text"])
+          PY
+          then
+            reason="Tracker API returned invalid JSON or an unhealthy payload."
+            notify_failure "$reason"
+            echo "$reason" >&2
+            cat "$response_file" >&2
+            exit 1
+          fi

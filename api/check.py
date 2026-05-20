@@ -20,6 +20,7 @@ REQUEST_TIMEOUT_SECONDS = 20
 HARDCODED_INITIAL_TEXT = "Entry Form for Amateur Players - Season 2026 (Leg 5 to 6)"
 BASELINE_CAPTURED_AT = "March 31, 2026"
 MONITOR_STARTED_AT = "April 1, 2026"
+DEFAULT_TRACKER_URL = "https://wgai-monitor.vercel.app"
 HISTORY_CSV_URL = (
     "https://raw.githubusercontent.com/"
     "nikhilsahni10/wgai-entry-form-tracker/main/data/check_history.csv"
@@ -38,6 +39,43 @@ def load_config():
         "kv_rest_api_token": os.environ.get("KV_REST_API_TOKEN", "").strip(),
     }
     return config
+
+
+def normalize_public_url(value):
+    value = value.strip().rstrip("/")
+    if not value:
+        return ""
+    if "://" not in value:
+        value = f"https://{value}"
+    return value
+
+
+def configured_public_tracker_url():
+    for env_name in (
+        "TRACKER_URL",
+        "PUBLIC_TRACKER_URL",
+        "VERCEL_PROJECT_PRODUCTION_URL",
+        "VERCEL_URL",
+    ):
+        tracker_url = normalize_public_url(os.environ.get(env_name, ""))
+        if tracker_url:
+            return tracker_url
+
+    return ""
+
+
+def public_tracker_url(headers=None):
+    tracker_url = configured_public_tracker_url()
+    if tracker_url:
+        return tracker_url
+
+    if headers is not None:
+        host = headers.get("x-forwarded-host") or headers.get("host")
+        if host:
+            protocol = headers.get("x-forwarded-proto") or "https"
+            return normalize_public_url(f"{protocol}://{host}")
+
+    return DEFAULT_TRACKER_URL
 
 
 # Normalize whitespace so the stored value is stable across minor HTML spacing changes.
@@ -145,13 +183,14 @@ def detect_chat_id(token):
     return ""
 
 
-def send_failure_alert(config, reason):
+def send_failure_alert(config, reason, tracker_url=None):
     if not config.get("telegram_token") or not config.get("chat_id"):
         return
 
     message = (
         "WGAI monitoring failed.\n\n"
         f"Reason:\n{reason}\n\n"
+        f"Public tracker:\n{tracker_url or public_tracker_url()}\n\n"
         f"URL:\n{MONITOR_URL}"
     )
 
@@ -228,10 +267,12 @@ def load_check_history():
         return [], 0
 
 
-def render_status_page(payload):
+def render_status_page(payload, tracker_url=None):
     status = payload.get("status", "unknown")
     current_text = payload.get("current_text", "Unavailable")
+    error = payload.get("error", "")
     history_rows, total_history_rows = load_check_history()
+    latest_history_status = history_rows[0].get("status", "") if history_rows else ""
     latest_history_time = (
         parse_history_timestamp(history_rows[0]["timestamp"]) if history_rows else None
     )
@@ -249,9 +290,24 @@ def render_status_page(payload):
         elapsed = datetime.now(timezone.utc).astimezone(IST) - latest_history_time
         is_monitor_stale = elapsed > timedelta(minutes=STALE_AFTER_MINUTES)
         if not is_monitor_stale:
-            health_badge = "Monitor healthy"
-            health_tone = "tone-ok"
-            health_copy = "Hosted checks are arriving on schedule."
+            if latest_history_status == "failed":
+                health_badge = "Monitor degraded"
+                health_tone = "tone-alert"
+                health_copy = (
+                    "Hosted checks are still arriving, but the latest GitHub Actions "
+                    "check failed."
+                )
+            elif latest_history_status.startswith("fallback_"):
+                health_badge = "Fallback mode"
+                health_tone = "tone-waiting"
+                health_copy = (
+                    "Hosted checks are arriving via the Vercel tracker fallback because "
+                    "the direct GitHub Actions fetch is failing."
+                )
+            else:
+                health_badge = "Monitor healthy"
+                health_tone = "tone-ok"
+                health_copy = "Hosted checks are arriving on schedule."
 
     if status == "changed":
         badge = "Change detected"
@@ -265,6 +321,13 @@ def render_status_page(payload):
         hero_copy = (
             "The public tracker is live. Telegram alerting will stay quiet until the bot chat is connected."
         )
+    elif status == "error":
+        badge = "Live check failed"
+        tone = "tone-alert"
+        if error:
+            hero_copy = f"The status page loaded, but the live WGAI check failed. {error}"
+        else:
+            hero_copy = "The status page loaded, but the live WGAI check failed."
     else:
         badge = "No change detected"
         tone = "tone-ok"
@@ -275,7 +338,7 @@ def render_status_page(payload):
     if history_rows:
         history_table_rows = "".join(
             f"""
-            <tr class="history-row {'history-row-alert' if row.get('changed') == 'true' else ''}">
+            <tr class="history-row {'history-row-alert' if row.get('changed') == 'true' or row.get('status') == 'failed' else 'history-row-waiting' if row.get('status', '').startswith('fallback_') else ''}">
               <td>{escape(row.get("timestamp", ""))}</td>
               <td>{escape(row.get("status", ""))}</td>
               <td>{escape(row.get("current_text", ""))}</td>
@@ -507,6 +570,9 @@ def render_status_page(payload):
       .history-row-alert td {{
         background: rgba(253, 235, 236, 0.6);
       }}
+      .history-row-waiting td {{
+        background: rgba(255, 243, 216, 0.65);
+      }}
       a {{ color: inherit; }}
       @media (max-width: 700px) {{
         .hero {{ padding: 24px; border-radius: 22px; }}
@@ -583,6 +649,10 @@ def render_status_page(payload):
       </div>
 
       <p class="footer">
+        Public tracker:
+        <a href="{escape(tracker_url or public_tracker_url())}">{escape(tracker_url or public_tracker_url())}</a>
+      </p>
+      <p class="footer">
         Source page:
         <a href="{escape(MONITOR_URL)}">{escape(MONITOR_URL)}</a>
       </p>
@@ -595,8 +665,9 @@ def render_status_page(payload):
 
 
 # The core monitoring flow is kept separate so it can be tested locally.
-def run_check(send_notifications=True):
+def run_check(send_notifications=True, tracker_url=None):
     config = load_config()
+    tracker_url = tracker_url or public_tracker_url()
 
     try:
         if send_notifications and not config["telegram_token"]:
@@ -649,7 +720,8 @@ def run_check(send_notifications=True):
                 "WGAI monitor is live.\n\n"
                 "First observed text:\n"
                 f"{current_text}\n\n"
-                f"URL:\n{MONITOR_URL}",
+                f"Public tracker:\n{tracker_url}\n\n"
+                f"Source page:\n{MONITOR_URL}",
             )
 
             if use_kv:
@@ -676,7 +748,8 @@ def run_check(send_notifications=True):
                 f"{previous_text}\n\n"
                 "New text:\n"
                 f"{current_text}\n\n"
-                f"URL:\n{MONITOR_URL}",
+                f"Public tracker:\n{tracker_url}\n\n"
+                f"Source page:\n{MONITOR_URL}",
             )
 
             if use_kv:
@@ -702,7 +775,7 @@ def run_check(send_notifications=True):
             "current_text": current_text,
         }
     except Exception as error:
-        send_failure_alert(config, str(error))
+        send_failure_alert(config, str(error), tracker_url=tracker_url)
         return 500, {"ok": False, "status": "error", "error": str(error)}
 
 
@@ -713,7 +786,11 @@ class handler(BaseHTTPRequestHandler):
         query = parse_qs(parsed.query)
         confirm = query.get("confirm", ["0"])[0] == "1"
         send_notifications = parsed.path == "/api/notify"
-        status_code, payload = run_check(send_notifications=send_notifications)
+        tracker_url = public_tracker_url(self.headers)
+        status_code, payload = run_check(
+            send_notifications=send_notifications,
+            tracker_url=tracker_url,
+        )
 
         if confirm and payload.get("ok") and payload.get("status") == "unchanged":
             config = load_config()
@@ -728,7 +805,8 @@ class handler(BaseHTTPRequestHandler):
                         "WGAI monitor is live.\n\n"
                         "Current text:\n"
                         f"{payload['current_text']}\n\n"
-                        f"URL:\n{MONITOR_URL}",
+                        f"Public tracker:\n{tracker_url}\n\n"
+                        f"Source page:\n{MONITOR_URL}",
                     )
                     payload["status"] = "confirmed"
                 except Exception as error:
@@ -744,7 +822,9 @@ class handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
-            self.wfile.write(render_status_page(payload).encode("utf-8"))
+            self.wfile.write(
+                render_status_page(payload, tracker_url=tracker_url).encode("utf-8")
+            )
             return
 
         self.send_response(status_code)
