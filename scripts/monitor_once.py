@@ -241,7 +241,6 @@ def main():
     chat_id = os.environ.get("CHAT_ID", "").strip()
     timestamp = current_ist_timestamp()
     previous_text, initialized = load_previous_text()
-    previous_fetch_source = load_previous_fetch_source()
     current_text = ""
     fetch_source = ""
     direct_error = None
@@ -254,14 +253,6 @@ def main():
 
         current_text, fetch_source, direct_error = fetch_current_text()
         changed = initialized and current_text != previous_text
-        entered_fallback = (
-            fetch_source == FETCH_SOURCE_TRACKER_FALLBACK
-            and previous_fetch_source != FETCH_SOURCE_TRACKER_FALLBACK
-        )
-        recovered_direct_fetch = (
-            fetch_source == FETCH_SOURCE_DIRECT
-            and previous_fetch_source == FETCH_SOURCE_TRACKER_FALLBACK
-        )
 
         if changed:
             message = (
@@ -286,31 +277,6 @@ def main():
                 chat_id,
                 message,
             )
-        elif entered_fallback and direct_error is not None:
-            send_telegram_message(
-                telegram_token,
-                chat_id,
-                "WGAI monitor entered tracker fallback mode.\n\n"
-                "GitHub Actions could not fetch the WGAI page directly, but the "
-                "Vercel tracker API still returned the current text.\n\n"
-                "Current text:\n"
-                f"{current_text}\n\n"
-                "Direct fetch error:\n"
-                f"{truncate_for_history(str(direct_error), limit=400)}\n\n"
-                "Public tracker:\n"
-                f"{TRACKER_URL}",
-            )
-        elif recovered_direct_fetch:
-            send_telegram_message(
-                telegram_token,
-                chat_id,
-                "WGAI monitor recovered direct fetching.\n\n"
-                "GitHub Actions can reach the WGAI page directly again.\n\n"
-                "Current text:\n"
-                f"{current_text}\n\n"
-                "Public tracker:\n"
-                f"{TRACKER_URL}",
-            )
 
         save_current_text(current_text)
         save_fetch_source(fetch_source)
@@ -330,21 +296,6 @@ def main():
         error_summary = truncate_for_history(str(error))
         failure_text = f"Monitoring failed: {error_summary}"
         append_history_row(timestamp, "failed", False, failure_text)
-
-        try:
-            if telegram_token and chat_id:
-                send_telegram_message(
-                    telegram_token,
-                    chat_id,
-                    "WGAI monitor failed.\n\n"
-                    f"Time:\n{timestamp}\n\n"
-                    f"Reason:\n{error_summary}\n\n"
-                    f"Latest observed text:\n{current_text or 'Unavailable'}\n\n"
-                    "Public tracker:\n"
-                    f"{TRACKER_URL}",
-                )
-        except Exception as alert_error:
-            print(f"Failed to send Telegram failure alert: {alert_error}", file=sys.stderr)
 
         raise
 

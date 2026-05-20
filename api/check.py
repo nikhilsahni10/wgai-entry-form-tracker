@@ -17,8 +17,8 @@ TARGET_SUBSTRING = "Entry Form for Amateur Players"
 MAX_MATCH_LENGTH = 100
 KV_KEY = "wgai:entry_form_for_amateur_players"
 REQUEST_TIMEOUT_SECONDS = 20
-HARDCODED_INITIAL_TEXT = "Entry Form for Amateur Players - Season 2026 (Leg 5 to 6)"
-BASELINE_CAPTURED_AT = "March 31, 2026"
+HARDCODED_INITIAL_TEXT = "Entry Form for Amateur Players - Season 2026 (Leg 7 to 8)"
+BASELINE_CAPTURED_AT = "May 20, 2026"
 MONITOR_STARTED_AT = "April 1, 2026"
 DEFAULT_TRACKER_URL = "https://wgai-monitor.vercel.app"
 HISTORY_CSV_URL = (
@@ -146,7 +146,7 @@ def kv_set(rest_url, token, key, value):
         raise RuntimeError(f"KV set failed: {payload}")
 
 
-# Telegram is used for first-run confirmation, change alerts, and failure alerts.
+# Telegram is used only for monitored-text change alerts.
 def send_telegram_message(token, chat_id, message):
     response = requests.post(
         f"https://api.telegram.org/bot{token}/sendMessage",
@@ -181,23 +181,6 @@ def detect_chat_id(token):
                 return str(chat["id"])
 
     return ""
-
-
-def send_failure_alert(config, reason, tracker_url=None):
-    if not config.get("telegram_token") or not config.get("chat_id"):
-        return
-
-    message = (
-        "WGAI monitoring failed.\n\n"
-        f"Reason:\n{reason}\n\n"
-        f"Public tracker:\n{tracker_url or public_tracker_url()}\n\n"
-        f"URL:\n{MONITOR_URL}"
-    )
-
-    try:
-        send_telegram_message(config["telegram_token"], config["chat_id"], message)
-    except Exception as alert_error:
-        print(f"Failed to send Telegram failure alert: {alert_error}")
 
 
 def build_payload(current_text, previous_text, storage, chat_ready):
@@ -657,7 +640,7 @@ def render_status_page(payload, tracker_url=None):
         <a href="{escape(MONITOR_URL)}">{escape(MONITOR_URL)}</a>
       </p>
       <p class="footer">
-        Public page hosted on Vercel. Automated checks run on GitHub Actions every 5 minutes, and Telegram alerts are sent only for real changes or monitor failures.
+        Public page hosted on Vercel. Automated checks run on GitHub Actions every 5 minutes, and Telegram alerts are sent only when the monitored text changes.
       </p>
     </main>
   </body>
@@ -714,16 +697,6 @@ def run_check(send_notifications=True, tracker_url=None):
             }
 
         if is_first_run:
-            send_telegram_message(
-                config["telegram_token"],
-                config["chat_id"],
-                "WGAI monitor is live.\n\n"
-                "First observed text:\n"
-                f"{current_text}\n\n"
-                f"Public tracker:\n{tracker_url}\n\n"
-                f"Source page:\n{MONITOR_URL}",
-            )
-
             if use_kv:
                 kv_set(
                     config["kv_rest_api_url"],
@@ -775,7 +748,6 @@ def run_check(send_notifications=True, tracker_url=None):
             "current_text": current_text,
         }
     except Exception as error:
-        send_failure_alert(config, str(error), tracker_url=tracker_url)
         return 500, {"ok": False, "status": "error", "error": str(error)}
 
 
@@ -793,29 +765,7 @@ class handler(BaseHTTPRequestHandler):
         )
 
         if confirm and payload.get("ok") and payload.get("status") == "unchanged":
-            config = load_config()
-            if not config["chat_id"]:
-                config["chat_id"] = detect_chat_id(config["telegram_token"])
-
-            if config["chat_id"]:
-                try:
-                    send_telegram_message(
-                        config["telegram_token"],
-                        config["chat_id"],
-                        "WGAI monitor is live.\n\n"
-                        "Current text:\n"
-                        f"{payload['current_text']}\n\n"
-                        f"Public tracker:\n{tracker_url}\n\n"
-                        f"Source page:\n{MONITOR_URL}",
-                    )
-                    payload["status"] = "confirmed"
-                except Exception as error:
-                    payload = {
-                        "ok": False,
-                        "status": "error",
-                        "error": str(error),
-                    }
-                    status_code = 500
+            payload["status"] = "confirmed"
 
         if parsed.path == "/":
             self.send_response(status_code)

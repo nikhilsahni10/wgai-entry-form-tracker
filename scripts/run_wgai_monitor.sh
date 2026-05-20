@@ -1,8 +1,7 @@
 #!/bin/zsh
 
 # Local 5-minute scheduler for the deployed Vercel endpoint.
-# Before Telegram is initialized, it calls ?confirm=1 so the first successful
-# chat detection automatically sends a confirmation message once.
+# Telegram notifications are sent only when the monitored text changes.
 
 set -eu
 

@@ -11,6 +11,9 @@ This project watches the WGAI membership page for the short text containing
 `Entry Form for Amateur Players` and highlights whether the live text has
 changed from the baseline.
 
+Current baseline: `Entry Form for Amateur Players - Season 2026 (Leg 7 to 8)`.
+Telegram alerts are sent only when this monitored text changes.
+
 Hosted checks run every 5 minutes through GitHub Actions. The share page on
 Vercel is read-only and safe to open publicly. If a GitHub Actions runner
 cannot reach `wgai.co.in` directly, the monitor falls back to the deployed
