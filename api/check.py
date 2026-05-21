@@ -280,13 +280,6 @@ def render_status_page(payload, tracker_url=None):
                     "Hosted checks are still arriving, but the latest GitHub Actions "
                     "check failed."
                 )
-            elif latest_history_status.startswith("fallback_"):
-                health_badge = "Fallback mode"
-                health_tone = "tone-waiting"
-                health_copy = (
-                    "Hosted checks are arriving via the Vercel tracker fallback because "
-                    "the direct GitHub Actions fetch is failing."
-                )
             else:
                 health_badge = "Monitor healthy"
                 health_tone = "tone-ok"
@@ -321,7 +314,7 @@ def render_status_page(payload, tracker_url=None):
     if history_rows:
         history_table_rows = "".join(
             f"""
-            <tr class="history-row {'history-row-alert' if row.get('changed') == 'true' or row.get('status') == 'failed' else 'history-row-waiting' if row.get('status', '').startswith('fallback_') else ''}">
+            <tr class="history-row {'history-row-alert' if row.get('changed') == 'true' or row.get('status') == 'failed' else ''}">
               <td>{escape(row.get("timestamp", ""))}</td>
               <td>{escape(row.get("status", ""))}</td>
               <td>{escape(row.get("current_text", ""))}</td>
@@ -552,9 +545,6 @@ def render_status_page(payload, tracker_url=None):
       }}
       .history-row-alert td {{
         background: rgba(253, 235, 236, 0.6);
-      }}
-      .history-row-waiting td {{
-        background: rgba(255, 243, 216, 0.65);
       }}
       a {{ color: inherit; }}
       @media (max-width: 700px) {{

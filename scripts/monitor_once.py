@@ -288,9 +288,6 @@ def main():
         else:
             status = "unchanged"
 
-        if fetch_source == FETCH_SOURCE_TRACKER_FALLBACK:
-            status = f"fallback_{status}"
-
         append_history_row(timestamp, status, changed, current_text)
     except Exception as error:
         error_summary = truncate_for_history(str(error))
