@@ -1,5 +1,6 @@
 import csv
 import os
+import re
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -11,7 +12,12 @@ from bs4 import BeautifulSoup
 # The GitHub Actions monitor uses the same matching rules as the public page.
 MONITOR_URL = "https://www.wgai.co.in/pages/membership-information.php"
 TARGET_SUBSTRING = "Entry Form for Amateur Players"
-MAX_MATCH_LENGTH = 100
+ENTRY_FORM_PATTERN = re.compile(
+    r"Entry Form for Amateur Players"
+    r"(?:\s*[-\u2013\u2014]\s*Season\s+\d{4}(?:\s*\([^)]*Leg[^)]*\))?)?",
+    re.IGNORECASE,
+)
+MATCH_SEPARATOR = " | "
 REQUEST_TIMEOUT_SECONDS = 20
 FETCH_RETRIES = 3
 FALLBACK_FETCH_RETRIES = 2
@@ -56,22 +62,30 @@ def normalize_text(value):
     return " ".join(value.split())
 
 
-def extract_target_text(html):
+def extract_target_texts(html):
     soup = BeautifulSoup(html, "html.parser")
     matches = []
+    seen = set()
 
-    for tag in soup.find_all(True):
-        text = normalize_text(tag.get_text(" ", strip=True))
-        if TARGET_SUBSTRING in text and len(text) < MAX_MATCH_LENGTH:
-            matches.append(text)
+    page_text = soup.get_text("\n", strip=True)
+    for line in page_text.splitlines():
+        for match in ENTRY_FORM_PATTERN.finditer(normalize_text(line)):
+            text = normalize_text(match.group(0))
+            key = text.casefold()
+            if TARGET_SUBSTRING.casefold() in key and key not in seen:
+                seen.add(key)
+                matches.append(text)
 
     if not matches:
         raise ValueError(
-            f'No element text containing "{TARGET_SUBSTRING}" under '
-            f"{MAX_MATCH_LENGTH} characters was found."
+            f'No entry-form text containing "{TARGET_SUBSTRING}" was found.'
         )
 
-    return min(matches, key=lambda item: (len(item), item))
+    return matches
+
+
+def extract_target_text(html):
+    return MATCH_SEPARATOR.join(extract_target_texts(html))
 
 
 def fetch_direct_current_text():

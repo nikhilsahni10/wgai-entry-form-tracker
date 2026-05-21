@@ -1,6 +1,7 @@
 import csv
 import json
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from html import escape
 from http.server import BaseHTTPRequestHandler
@@ -14,7 +15,12 @@ from bs4 import BeautifulSoup
 # Fixed monitor settings for this one-page watcher.
 MONITOR_URL = "https://www.wgai.co.in/pages/membership-information.php"
 TARGET_SUBSTRING = "Entry Form for Amateur Players"
-MAX_MATCH_LENGTH = 100
+ENTRY_FORM_PATTERN = re.compile(
+    r"Entry Form for Amateur Players"
+    r"(?:\s*[-\u2013\u2014]\s*Season\s+\d{4}(?:\s*\([^)]*Leg[^)]*\))?)?",
+    re.IGNORECASE,
+)
+MATCH_SEPARATOR = " | "
 KV_KEY = "wgai:entry_form_for_amateur_players"
 REQUEST_TIMEOUT_SECONDS = 20
 HARDCODED_INITIAL_TEXT = "Entry Form for Amateur Players - Season 2026 (Leg 7 to 8)"
@@ -83,24 +89,32 @@ def normalize_text(value):
     return " ".join(value.split())
 
 
-# Find the shortest matching element text so we avoid parent containers like
-# "Entry Form... Click to submit" and store only the text being monitored.
-def extract_target_text(html):
+# Extract every watched entry-form item, not just the first one. WGAI sometimes
+# appends a new leg below the old one instead of replacing the old text.
+def extract_target_texts(html):
     soup = BeautifulSoup(html, "html.parser")
     matches = []
+    seen = set()
 
-    for tag in soup.find_all(True):
-        text = normalize_text(tag.get_text(" ", strip=True))
-        if TARGET_SUBSTRING in text and len(text) < MAX_MATCH_LENGTH:
-            matches.append(text)
+    page_text = soup.get_text("\n", strip=True)
+    for line in page_text.splitlines():
+        for match in ENTRY_FORM_PATTERN.finditer(normalize_text(line)):
+            text = normalize_text(match.group(0))
+            key = text.casefold()
+            if TARGET_SUBSTRING.casefold() in key and key not in seen:
+                seen.add(key)
+                matches.append(text)
 
     if not matches:
         raise ValueError(
-            f'No element text containing "{TARGET_SUBSTRING}" under '
-            f"{MAX_MATCH_LENGTH} characters was found."
+            f'No entry-form text containing "{TARGET_SUBSTRING}" was found.'
         )
 
-    return min(matches, key=lambda item: (len(item), item))
+    return matches
+
+
+def extract_target_text(html):
+    return MATCH_SEPARATOR.join(extract_target_texts(html))
 
 
 # Fetch the live page and extract the current watched text.

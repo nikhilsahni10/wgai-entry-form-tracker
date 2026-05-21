@@ -13,6 +13,9 @@ changed from the baseline.
 
 Current baseline: `Entry Form for Amateur Players - Season 2026 (Leg 7 to 8)`.
 Telegram alerts are sent only when this monitored text changes.
+If WGAI adds another amateur entry form below the old one, the monitor tracks
+the combined list of matching entry-form items so additions and removals are
+detected too.
 
 Hosted checks run every 5 minutes through GitHub Actions. The share page on
 Vercel is read-only and safe to open publicly. If a GitHub Actions runner
