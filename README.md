@@ -23,3 +23,7 @@ cannot reach `wgai.co.in` directly, the monitor falls back to the deployed
 Vercel API before treating the check as a hard failure. For that fallback to
 work from GitHub Actions, set the repository variable `TRACKER_URL` to the
 live Vercel URL.
+
+If WGAI is temporarily unreachable from Vercel too, the public page shows the
+last recorded observation marked as not live. That recorded value is never
+used to send a Telegram change alert or to pass the uptime check.

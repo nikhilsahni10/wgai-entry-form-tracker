@@ -201,6 +201,7 @@ def build_payload(current_text, previous_text, storage, chat_ready):
     if not chat_ready:
         return {
             "ok": True,
+            "live": True,
             "status": "awaiting_chat",
             "storage": storage,
             "current_text": current_text,
@@ -210,6 +211,7 @@ def build_payload(current_text, previous_text, storage, chat_ready):
     if current_text != previous_text:
         return {
             "ok": True,
+            "live": True,
             "status": "changed",
             "storage": storage,
             "old_text": previous_text,
@@ -219,6 +221,7 @@ def build_payload(current_text, previous_text, storage, chat_ready):
 
     return {
         "ok": True,
+        "live": True,
         "status": "unchanged",
         "storage": storage,
         "current_text": current_text,
@@ -264,10 +267,34 @@ def load_check_history():
         return [], 0
 
 
+def latest_recorded_observation():
+    history_rows, _ = load_check_history()
+
+    for row in history_rows:
+        current_text = normalize_text(row.get("current_text", ""))
+        if row.get("status") != "failed" and current_text:
+            return {
+                "timestamp": row.get("timestamp", ""),
+                "current_text": current_text,
+            }
+
+    return None
+
+
 def render_status_page(payload, tracker_url=None):
     status = payload.get("status", "unknown")
     current_text = payload.get("current_text", "Unavailable")
     error = payload.get("error", "")
+    is_live = payload.get("live", status != "source_unavailable")
+    current_text_label = "Current Live Text" if is_live else "Last Recorded Text"
+    latest_observation_title = (
+        "Latest live check" if is_live else "Most recent recorded observation"
+    )
+    latest_observation_timestamp = (
+        current_ist_timestamp()
+        if is_live
+        else payload.get("observed_at") or current_ist_timestamp()
+    )
     history_rows, total_history_rows = load_check_history()
     latest_history_status = history_rows[0].get("status", "") if history_rows else ""
     latest_history_time = (
@@ -299,7 +326,16 @@ def render_status_page(payload, tracker_url=None):
                 health_tone = "tone-ok"
                 health_copy = "Hosted checks are arriving on schedule."
 
-    if status == "changed":
+    if status == "source_unavailable":
+        badge = "Live source unavailable"
+        tone = "tone-alert"
+        hero_copy = (
+            "WGAI could not be reached for a live check. Showing the most recently "
+            "recorded observation."
+        )
+        if payload.get("comparison_status") == "changed":
+            hero_copy += " That recorded text differs from the baseline."
+    elif status == "changed":
         badge = "Change detected"
         tone = "tone-alert"
         hero_copy = (
@@ -355,8 +391,8 @@ def render_status_page(payload, tracker_url=None):
             "Hosted checks run every 5 minutes through GitHub Actions.",
         ),
         (
-            current_ist_timestamp(),
-            "Latest live check",
+            latest_observation_timestamp,
+            latest_observation_title,
             current_text,
         ),
     ]
@@ -608,7 +644,7 @@ def render_status_page(payload, tracker_url=None):
             <div class="text-value">{escape(HARDCODED_INITIAL_TEXT)}</div>
           </article>
           <article class="text-card">
-            <div class="text-label">Current Live Text</div>
+            <div class="text-label">{escape(current_text_label)}</div>
             <div class="text-value">{escape(current_text)}</div>
           </article>
         </div>
@@ -663,7 +699,21 @@ def run_check(send_notifications=True, tracker_url=None):
         if send_notifications and not config["chat_id"]:
             config["chat_id"] = detect_chat_id(config["telegram_token"])
 
-        current_text = fetch_current_text()
+        source_error = None
+        recorded_observation = None
+        try:
+            current_text = fetch_current_text()
+        except Exception as fetch_error:
+            if send_notifications:
+                raise
+
+            recorded_observation = latest_recorded_observation()
+            if recorded_observation is None:
+                raise
+
+            current_text = recorded_observation["current_text"]
+            source_error = str(fetch_error)
+
         use_kv = bool(config["kv_rest_api_url"] and config["kv_rest_api_token"])
 
         if use_kv:
@@ -676,12 +726,23 @@ def run_check(send_notifications=True, tracker_url=None):
             is_first_run = False
 
         if not send_notifications:
-            return 200, build_payload(
+            payload = build_payload(
                 current_text,
                 previous_text,
                 "kv" if use_kv else "baseline",
                 True,
             )
+            if source_error is not None:
+                payload.update(
+                    {
+                        "live": False,
+                        "comparison_status": payload["status"],
+                        "status": "source_unavailable",
+                        "observed_at": recorded_observation["timestamp"],
+                        "error": source_error,
+                    }
+                )
+            return 200, payload
 
         if not config["chat_id"]:
             if use_kv and previous_text is None:
@@ -694,6 +755,7 @@ def run_check(send_notifications=True, tracker_url=None):
 
             return 200, {
                 "ok": True,
+                "live": True,
                 "status": "awaiting_chat",
                 "storage": "kv" if use_kv else "baseline",
                 "current_text": current_text,
@@ -711,6 +773,7 @@ def run_check(send_notifications=True, tracker_url=None):
 
             return 200, {
                 "ok": True,
+                "live": True,
                 "status": "initialized",
                 "storage": "kv" if use_kv else "baseline",
                 "current_text": current_text,
@@ -739,14 +802,17 @@ def run_check(send_notifications=True, tracker_url=None):
 
             return 200, {
                 "ok": True,
+                "live": True,
                 "status": "changed",
                 "storage": "kv" if use_kv else "baseline",
                 "old_text": previous_text,
                 "new_text": current_text,
+                "current_text": current_text,
             }
 
         return 200, {
             "ok": True,
+            "live": True,
             "status": "unchanged",
             "storage": "kv" if use_kv else "baseline",
             "current_text": current_text,

@@ -43,6 +43,9 @@ jobs:
           if not payload.get("current_text"):
               raise SystemExit(f"Missing current_text in payload: {payload}")
 
+          if payload.get("live") is False or payload.get("status") == "source_unavailable":
+              raise SystemExit(payload.get("error") or "Tracker returned only recorded data.")
+
           print(payload["current_text"])
           PY
           then

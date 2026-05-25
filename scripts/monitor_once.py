@@ -126,6 +126,12 @@ def fetch_tracker_current_text():
             if not payload.get("ok"):
                 raise RuntimeError(payload.get("error") or f"Tracker API error: {payload}")
 
+            if payload.get("live") is False or payload.get("status") == "source_unavailable":
+                raise RuntimeError(
+                    payload.get("error")
+                    or "Tracker API returned a previously recorded observation, not live data."
+                )
+
             current_text = normalize_text(payload.get("current_text", ""))
             if not current_text:
                 raise RuntimeError("Tracker API returned an empty current_text value.")
