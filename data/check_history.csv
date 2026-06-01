@@ -17694,3 +17694,4 @@ timestamp,status,changed,current_text
 2026-06-01 19:50:00 IST,unchanged,false,Entry Form for Amateur Players - Season 2026 (Leg 7 to 8) | Entry Form for Amateur Players - Season 2026 (Leg 9 to 10)
 2026-06-01 19:55:00 IST,unchanged,false,Entry Form for Amateur Players - Season 2026 (Leg 7 to 8) | Entry Form for Amateur Players - Season 2026 (Leg 9 to 10)
 2026-06-01 20:00:00 IST,unchanged,false,Entry Form for Amateur Players - Season 2026 (Leg 7 to 8) | Entry Form for Amateur Players - Season 2026 (Leg 9 to 10)
+2026-06-01 20:05:00 IST,failed,false,"Monitoring failed: Direct fetch failed and tracker fallback also failed: direct_error=Failed to fetch monitored text after 3 attempts: HTTPSConnectionPool(host='www.wgai.co.in', port=443): Max retries exceeded with url: /pages/membershi..."
